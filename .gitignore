@@ -1,0 +1,17 @@
+# Xcode
+.DS_Store
+*.xcuserstate
+*.xcscmblueprint
+xcuserdata/
+
+# Build artifacts
+.derivedData/
+DerivedData/
+build/
+
+# Python
+__pycache__/
+*.pyc
+
+# Runtime output
+received_images/
