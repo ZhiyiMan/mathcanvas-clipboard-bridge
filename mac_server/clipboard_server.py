@@ -59,10 +59,52 @@ def _copy_image_to_clipboard(image_path: Path) -> Tuple[bool, str]:
         return False, stderr or f"osascript failed with code {exc.returncode}"
 
 
+def _list_interface_ips() -> list[str]:
+    """列出本机所有非回环 IPv4 地址（macOS ifconfig）。"""
+    try:
+        result = subprocess.run(["ifconfig"], capture_output=True, text=True, check=False)
+    except OSError:
+        return []
+
+    ips: list[str] = []
+    for line in result.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("inet ") or "127.0.0.1" in stripped:
+            continue
+        parts = stripped.split()
+        if len(parts) >= 2:
+            ips.append(parts[1])
+    return ips
+
+
+def _is_reachable_lan_ip(ip: str) -> bool:
+    """排除 VPN/代理常用的 198.18.x 以及链路本地地址。"""
+    octets = ip.split(".")
+    if len(octets) != 4:
+        return False
+    if ip.startswith("169.254."):
+        return False
+    if octets[0] == "198" and octets[1] == "18":
+        return False
+    return ip.startswith(("192.168.", "10.", "172."))
+
+
 def _guess_local_ip() -> str:
     """
-    尝试猜测当前最可能的局域网 IP，用于启动提示。
+    猜测 iPad 应填写的局域网 IP。
+    不能依赖「连 8.8.8.8 看源地址」——VPN/代理会把 198.18.x 误报成出口。
     """
+    candidates = [ip for ip in _list_interface_ips() if _is_reachable_lan_ip(ip)]
+    if candidates:
+        def sort_key(ip: str) -> tuple[int, str]:
+            if ip.startswith("192.168."):
+                return (0, ip)
+            if ip.startswith("10."):
+                return (1, ip)
+            return (2, ip)
+
+        return sorted(candidates, key=sort_key)[0]
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.connect(("8.8.8.8", 80))
@@ -71,6 +113,20 @@ def _guess_local_ip() -> str:
         return "127.0.0.1"
     finally:
         sock.close()
+
+
+def _list_recommended_ips() -> list[str]:
+    """返回所有可供 iPad 尝试的局域网 IP（按优先级排序）。"""
+    candidates = [ip for ip in _list_interface_ips() if _is_reachable_lan_ip(ip)]
+
+    def sort_key(ip: str) -> tuple[int, str]:
+        if ip.startswith("192.168."):
+            return (0, ip)
+        if ip.startswith("10."):
+            return (1, ip)
+        return (2, ip)
+
+    return sorted(set(candidates), key=sort_key)
 
 
 class ClipboardUploadHandler(BaseHTTPRequestHandler):
@@ -206,12 +262,19 @@ def main() -> None:
     )
 
     local_ip = _guess_local_ip()
+    all_ips = _list_recommended_ips()
     print("==============================================")
     print(" MathCanvas Clipboard Server 已启动")
     print("==============================================")
     print(f"监听地址: {args.host}:{args.port}")
     print(f"推荐 iPad 地址: http://{local_ip}:{args.port}/upload")
+    if len(all_ips) > 1:
+        print("其他可用地址（iPad 与 Mac 须在同一网段时选对应 IP）：")
+        for ip in all_ips:
+            if ip != local_ip:
+                print(f"  http://{ip}:{args.port}/upload")
     print(f"健康检查: http://{local_ip}:{args.port}/health")
+    print("提示: 若看到 198.18.x，那是 VPN/代理虚拟网卡，iPad 无法访问。")
     print(f"保存目录: {images_dir}")
     print(f"自动写剪贴板: {'开启' if enable_clipboard else '关闭'}")
     print("按 Ctrl+C 停止服务")

@@ -118,18 +118,23 @@ final class CanvasManager: ObservableObject {
     /// - URL: uploadEndpoint（例如 http://192.168.31.101:8765/upload）
     ///
     /// - Parameter image: 已经渲染好的完整截图
-    func sendImageToServer(image: UIImage) {
+    /// - Parameter completion: 主线程回调，success 表示 HTTP 2xx
+    func sendImageToServer(image: UIImage, completion: ((Bool, String) -> Void)? = nil) {
         let uploadEndpoint = currentUploadEndpoint()
         
         guard let url = URL(string: uploadEndpoint) else {
+            let message = "服务地址不是合法 URL"
             print("【MathCanvas】发送失败：uploadEndpoint 不是合法 URL -> \(uploadEndpoint)")
+            DispatchQueue.main.async { completion?(false, message) }
             return
         }
         
         // 用 JPEG 可以显著减小体积，网络发送更快。
         // 数学手写场景通常黑白为主，压缩质量 0.9所以已经非常清晰。
         guard let jpegData = image.jpegData(compressionQuality: 0.9) else {
+            let message = "图片转换失败"
             print("【MathCanvas】发送失败：UIImage 转 JPEG 失败")
+            DispatchQueue.main.async { completion?(false, message) }
             return
         }
         
@@ -143,20 +148,27 @@ final class CanvasManager: ObservableObject {
         
         URLSession.shared.uploadTask(with: request, from: jpegData) { data, response, error in
             if let error {
-                print("【MathCanvas】发送失败：\(error.localizedDescription)")
+                let message = Self.friendlyNetworkError(error)
+                print("【MathCanvas】发送失败：\(message)")
+                DispatchQueue.main.async { completion?(false, message) }
                 return
             }
             
             guard let httpResponse = response as? HTTPURLResponse else {
+                let message = "未收到 HTTP 响应"
                 print("【MathCanvas】发送失败：没有收到 HTTP 响应")
+                DispatchQueue.main.async { completion?(false, message) }
                 return
             }
             
             let responseText = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
             if (200...299).contains(httpResponse.statusCode) {
                 print("【MathCanvas】发送成功：status=\(httpResponse.statusCode) \(responseText)")
+                DispatchQueue.main.async { completion?(true, "已发送到 Mac ✓") }
             } else {
+                let message = "HTTP \(httpResponse.statusCode)"
                 print("【MathCanvas】发送失败：status=\(httpResponse.statusCode) \(responseText)")
+                DispatchQueue.main.async { completion?(false, message) }
             }
         }.resume()
     }
@@ -173,6 +185,99 @@ final class CanvasManager: ObservableObject {
     func updateUploadEndpoint(_ endpoint: String) {
         let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         UserDefaults.standard.set(trimmed, forKey: AppConfig.uploadEndpointKey)
+    }
+    
+    /// 从 upload 地址推导出 /health 检查地址。
+    func healthCheckURL(from uploadEndpoint: String) -> URL? {
+        let trimmed = uploadEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var components = URLComponents(string: trimmed) else { return nil }
+        guard let host = components.host, !host.isEmpty else { return nil }
+        
+        components.path = "/health"
+        components.query = nil
+        components.fragment = nil
+        return components.url
+    }
+    
+    /// 测试 Mac 服务是否可达（GET /health）。
+    func testServerConnection(endpoint: String, completion: @escaping (Bool, String) -> Void) {
+        let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        guard !trimmed.isEmpty else {
+            DispatchQueue.main.async {
+                completion(false, "请先填写服务地址")
+            }
+            return
+        }
+        
+        if trimmed.contains("198.18.") {
+            DispatchQueue.main.async {
+                completion(false, "198.18.x 是 VPN/代理地址，iPad 无法访问，请改用 Mac 局域网 IP")
+            }
+            return
+        }
+        
+        guard let url = healthCheckURL(from: trimmed) else {
+            DispatchQueue.main.async {
+                completion(false, "地址格式不正确，示例：http://192.168.x.x:8765/upload")
+            }
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 8
+        
+        print("【MathCanvas】测试连接：\(url.absoluteString)")
+        
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            if let error {
+                let message = Self.friendlyNetworkError(error)
+                print("【MathCanvas】测试失败：\(message)")
+                DispatchQueue.main.async { completion(false, message) }
+                return
+            }
+            
+            guard let httpResponse = response as? HTTPURLResponse else {
+                DispatchQueue.main.async { completion(false, "未收到 HTTP 响应") }
+                return
+            }
+            
+            if (200...299).contains(httpResponse.statusCode) {
+                print("【MathCanvas】测试成功：status=\(httpResponse.statusCode)")
+                DispatchQueue.main.async { completion(true, "连接正常，Mac 服务可用 ✓") }
+            } else {
+                DispatchQueue.main.async {
+                    completion(false, "服务返回 HTTP \(httpResponse.statusCode)")
+                }
+            }
+        }.resume()
+    }
+    
+    /// 把 URLError 转成可操作的提示文案。
+    static func friendlyNetworkError(_ error: Error) -> String {
+        guard let urlError = error as? URLError else {
+            return error.localizedDescription
+        }
+        
+        switch urlError.code {
+        case .timedOut:
+            return "连接超时：确认 Mac 服务已启动，且 iPad 与 Mac 在同一 Wi-Fi"
+        case .cannotConnectToHost:
+            return "无法连接：Mac 服务未运行，或地址/端口填错"
+        case .cannotFindHost:
+            return "找不到主机：IP 可能填错（不要用 198.18.x）"
+        case .notConnectedToInternet:
+            return "网络不可用：请检查 Wi-Fi 连接"
+        case .networkConnectionLost:
+            return "连接中断：请重试"
+        default:
+            let description = urlError.localizedDescription.lowercased()
+            if description.contains("local network") || description.contains("本地网络") {
+                return "请前往「设置 → MathCanvas」允许本地网络访问"
+            }
+            return urlError.localizedDescription
+        }
     }
     
     // MARK: 显示 PencilKit 工具选择器
@@ -283,6 +388,8 @@ struct ContentView: View {
     
     /// 发送成功后的简单提示状态
     @State private var showSentConfirmation = false
+    @State private var sentConfirmationMessage = ""
+    @State private var sentConfirmationIsError = false
     
     /// 服务地址设置弹窗
     @State private var showEndpointSheet = false
@@ -323,17 +430,17 @@ struct ContentView: View {
                         // —— 发送按钮（主按钮）——
                         Button {
                             if let image = canvasManager.exportAsImage() {
-                                canvasManager.sendImageToServer(image: image)
-                                
-                                // 简单反馈：弹出一个临时提示条
-                                withAnimation(.spring) {
-                                    showSentConfirmation = true
-                                }
-                                
-                                // 1.8 秒后自动隐藏提示
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
-                                    withAnimation {
-                                        showSentConfirmation = false
+                                canvasManager.sendImageToServer(image: image) { success, message in
+                                    sentConfirmationMessage = message
+                                    sentConfirmationIsError = !success
+                                    withAnimation(.spring) {
+                                        showSentConfirmation = true
+                                    }
+                                    
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                                        withAnimation {
+                                            showSentConfirmation = false
+                                        }
                                     }
                                 }
                             }
@@ -365,9 +472,9 @@ struct ContentView: View {
             //    顶部居中轻提示，避免遮挡右下角按钮。
             if showSentConfirmation {
                 VStack {
-                    Text("图片已准备发送 ✓")
+                    Text(sentConfirmationMessage)
                         .font(.callout.bold())
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(sentConfirmationIsError ? .red : .primary)
                         .padding(.horizontal, 24)
                         .padding(.vertical, 10)
                         .background(.thinMaterial)
@@ -400,6 +507,9 @@ struct ContentView: View {
                 },
                 onReset: {
                     endpointDraft = AppConfig.defaultUploadEndpoint
+                },
+                onTestConnection: { endpoint, completion in
+                    canvasManager.testServerConnection(endpoint: endpoint, completion: completion)
                 }
             )
             .presentationDetents([.medium])
@@ -442,6 +552,11 @@ private struct ServerEndpointSheet: View {
     let currentEndpoint: String
     let onSave: () -> Void
     let onReset: () -> Void
+    let onTestConnection: (String, @escaping (Bool, String) -> Void) -> Void
+    
+    @State private var isTestingConnection = false
+    @State private var testResultMessage: String?
+    @State private var testResultSuccess: Bool?
     
     var body: some View {
         NavigationStack {
@@ -457,15 +572,58 @@ private struct ServerEndpointSheet: View {
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .onChange(of: endpointDraft) { _, _ in
+                            testResultMessage = nil
+                            testResultSuccess = nil
+                        }
                     
                     Button("恢复默认地址") {
                         onReset()
+                        testResultMessage = nil
+                        testResultSuccess = nil
                     }
+                }
+                
+                Section("连接测试") {
+                    Button {
+                        testResultMessage = nil
+                        testResultSuccess = nil
+                        isTestingConnection = true
+                        onTestConnection(endpointDraft) { success, message in
+                            isTestingConnection = false
+                            testResultSuccess = success
+                            testResultMessage = message
+                        }
+                    } label: {
+                        HStack {
+                            Text("测试连接")
+                            Spacer()
+                            if isTestingConnection {
+                                ProgressView()
+                            }
+                        }
+                    }
+                    .disabled(endpointDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isTestingConnection)
+                    
+                    if let testResultMessage {
+                        Label {
+                            Text(testResultMessage)
+                        } icon: {
+                            Image(systemName: testResultSuccess == true ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        }
+                        .foregroundStyle(testResultSuccess == true ? .green : .red)
+                        .font(.footnote)
+                    }
+                    
+                    Text("会向 Mac 的 /health 接口发送请求，确认服务是否在线。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 
                 Section("说明") {
                     Text("你的 iPad 和 Mac 必须在同一个局域网。")
                     Text("通常只需要改 IP，端口保持 8765，路径保持 /upload。")
+                    Text("不要用 198.18.x 地址——那是 Mac 上 VPN/代理的虚拟网卡，iPad 访问不到。")
                 }
             }
             .navigationTitle("服务设置")
