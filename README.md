@@ -71,13 +71,6 @@ MathCanvas/
 └─ LICENSE
 ```
 
-## 截图 / 演示
-
-你可以在这里放 1 张主界面截图和 1 个发送流程 GIF：
-
-- `docs/screenshot-ipad.png`
-- `docs/demo-send.gif`
-
 ## 常见问题
 
 ### Mac 服务相关
