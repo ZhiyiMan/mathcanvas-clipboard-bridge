@@ -148,7 +148,7 @@ final class CanvasManager: ObservableObject {
         
         URLSession.shared.uploadTask(with: request, from: jpegData) { data, response, error in
             if let error {
-                let message = Self.friendlyNetworkError(error)
+                let message = error.localizedDescription
                 print("【MathCanvas】发送失败：\(message)")
                 DispatchQueue.main.async { completion?(false, message) }
                 return
@@ -174,11 +174,13 @@ final class CanvasManager: ObservableObject {
     }
     
     // MARK: 服务地址设置（给分享版本用）
-    /// 当前生效的服务地址（保存在 UserDefaults）。
-    /// 没有保存过时，自动回落到 AppConfig.defaultUploadEndpoint。
+    /// 当前生效的服务地址。
+    /// - 如果用户从未保存过（或保存的是空字符串），返回空字符串，表示「尚未配置」。
+    /// - 首次使用时会据此自动弹出设置页，强制用户填写 Mac 端的真实地址。
     func currentUploadEndpoint() -> String {
         let saved = UserDefaults.standard.string(forKey: AppConfig.uploadEndpointKey)
-        return saved ?? AppConfig.defaultUploadEndpoint
+        let trimmed = saved?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed
     }
     
     /// 更新服务地址（会去掉前后空格，避免输入错误）。
@@ -187,96 +189,80 @@ final class CanvasManager: ObservableObject {
         UserDefaults.standard.set(trimmed, forKey: AppConfig.uploadEndpointKey)
     }
     
-    /// 从 upload 地址推导出 /health 检查地址。
-    func healthCheckURL(from uploadEndpoint: String) -> URL? {
-        let trimmed = uploadEndpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard var components = URLComponents(string: trimmed) else { return nil }
-        guard let host = components.host, !host.isEmpty else { return nil }
-        
-        components.path = "/health"
-        components.query = nil
-        components.fragment = nil
-        return components.url
+    /// 是否已经配置过有效的服务地址（用于首次使用引导和发送前校验）。
+    var isUploadEndpointConfigured: Bool {
+        let saved = UserDefaults.standard.string(forKey: AppConfig.uploadEndpointKey)
+        return (saved ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
     
-    /// 测试 Mac 服务是否可达（GET /health）。
-    func testServerConnection(endpoint: String, completion: @escaping (Bool, String) -> Void) {
-        let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
-        
-        guard !trimmed.isEmpty else {
-            DispatchQueue.main.async {
-                completion(false, "请先填写服务地址")
-            }
+    // MARK: 连接测试（服务设置页专用）
+    /// 从用户填写的上传地址推导出健康检查 URL 并发起 GET /health。
+    /// 支持用户只填到端口（如 http://192.168.1.181:8765），也会自动补 /health。
+    func testConnection(to endpoint: String, completion: @escaping (Bool, String) -> Void) {
+        guard let healthURL = Self.derivedHealthURL(from: endpoint) else {
+            completion(false, "地址格式不正确，请检查是否为 http://IP:端口 格式")
             return
         }
         
-        if trimmed.contains("198.18.") {
-            DispatchQueue.main.async {
-                completion(false, "198.18.x 是 VPN/代理地址，iPad 无法访问，请改用 Mac 局域网 IP")
-            }
-            return
-        }
-        
-        guard let url = healthCheckURL(from: trimmed) else {
-            DispatchQueue.main.async {
-                completion(false, "地址格式不正确，示例：http://192.168.x.x:8765/upload")
-            }
-            return
-        }
-        
-        var request = URLRequest(url: url)
+        var request = URLRequest(url: healthURL)
         request.httpMethod = "GET"
-        request.timeoutInterval = 8
+        request.timeoutInterval = 6
         
-        print("【MathCanvas】测试连接：\(url.absoluteString)")
+        print("【MathCanvas】开始连接测试：\(healthURL.absoluteString)")
         
-        URLSession.shared.dataTask(with: request) { _, response, error in
+        URLSession.shared.dataTask(with: request) { data, response, error in
             if let error {
-                let message = Self.friendlyNetworkError(error)
-                print("【MathCanvas】测试失败：\(message)")
+                let message = Self.friendlyNetworkErrorMessage(for: error)
+                print("【MathCanvas】连接测试失败：\(message)")
                 DispatchQueue.main.async { completion(false, message) }
                 return
             }
             
             guard let httpResponse = response as? HTTPURLResponse else {
-                DispatchQueue.main.async { completion(false, "未收到 HTTP 响应") }
+                let message = "未收到 HTTP 响应"
+                print("【MathCanvas】连接测试失败：\(message)")
+                DispatchQueue.main.async { completion(false, message) }
                 return
             }
             
             if (200...299).contains(httpResponse.statusCode) {
-                print("【MathCanvas】测试成功：status=\(httpResponse.statusCode)")
-                DispatchQueue.main.async { completion(true, "连接正常，Mac 服务可用 ✓") }
+                print("【MathCanvas】连接测试成功：status=\(httpResponse.statusCode)")
+                DispatchQueue.main.async { completion(true, "连接成功 ✓ Mac 服务可访问") }
             } else {
-                DispatchQueue.main.async {
-                    completion(false, "服务返回 HTTP \(httpResponse.statusCode)")
-                }
+                let message = "服务返回错误（HTTP \(httpResponse.statusCode)）"
+                print("【MathCanvas】连接测试失败：\(message)")
+                DispatchQueue.main.async { completion(false, message) }
             }
         }.resume()
     }
     
-    /// 把 URLError 转成可操作的提示文案。
-    static func friendlyNetworkError(_ error: Error) -> String {
-        guard let urlError = error as? URLError else {
+    /// 把任意上传地址转成健康检查地址（/health）。
+    private static func derivedHealthURL(from endpoint: String) -> URL? {
+        let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var comps = URLComponents(string: trimmed) else { return nil }
+        comps.path = "/health"
+        comps.query = nil
+        comps.fragment = nil
+        return comps.url
+    }
+    
+    /// 把底层网络错误翻译成对普通用户友好的提示（覆盖我们踩过的坑）。
+    private static func friendlyNetworkErrorMessage(for error: Error) -> String {
+        let ns = error as NSError
+        guard ns.domain == NSURLErrorDomain else {
             return error.localizedDescription
         }
-        
-        switch urlError.code {
-        case .timedOut:
-            return "连接超时：确认 Mac 服务已启动，且 iPad 与 Mac 在同一 Wi-Fi"
-        case .cannotConnectToHost:
-            return "无法连接：Mac 服务未运行，或地址/端口填错"
-        case .cannotFindHost:
-            return "找不到主机：IP 可能填错（不要用 198.18.x）"
-        case .notConnectedToInternet:
-            return "网络不可用：请检查 Wi-Fi 连接"
-        case .networkConnectionLost:
-            return "连接中断：请重试"
+        switch ns.code {
+        case NSURLErrorTimedOut:
+            return "连接超时。请确认：Mac 服务已启动；iPad 与 Mac 在同一个 Wi-Fi；没有误用 198.18.x 地址。"
+        case NSURLErrorCannotConnectToHost:
+            return "无法连接。常见原因：Mac 服务未运行、防火墙拦截了 8765 端口、IP 填错。"
+        case NSURLErrorCannotFindHost:
+            return "找不到主机。IP 地址可能填错，或 Mac 与 iPad 不在同一个局域网。"
+        case NSURLErrorNotConnectedToInternet:
+            return "iPad 当前没有网络连接。"
         default:
-            let description = urlError.localizedDescription.lowercased()
-            if description.contains("local network") || description.contains("本地网络") {
-                return "请前往「设置 → MathCanvas」允许本地网络访问"
-            }
-            return urlError.localizedDescription
+            return error.localizedDescription
         }
     }
     
@@ -395,6 +381,9 @@ struct ContentView: View {
     @State private var showEndpointSheet = false
     @State private var endpointDraft = ""
     
+    /// 标记本启动周期内是否已经自动弹出过「首次配置」弹窗，避免重复打扰。
+    @State private var didAutoShowSetupSheet = false
+    
     var body: some View {
         ZStack {
             // 1. 全屏 PencilKit 画布
@@ -417,18 +406,38 @@ struct ContentView: View {
                     VStack(spacing: 14) {
                         // —— 设置按钮（给分享版本非常重要）——
                         Button {
-                            endpointDraft = canvasManager.currentUploadEndpoint()
+                            let current = canvasManager.currentUploadEndpoint()
+                            // 如果尚未配置过，预填一个示例格式，方便用户直接改 IP
+                            endpointDraft = current.isEmpty ? AppConfig.endpointPlaceholder : current
                             showEndpointSheet = true
                         } label: {
                             FreeformFloatingButton(
                                 title: "服务",
                                 systemImage: "network",
-                                tint: .indigo
+                                tint: canvasManager.isUploadEndpointConfigured ? .indigo : .orange
                             )
                         }
                         
                         // —— 发送按钮（主按钮）——
                         Button {
+                            // 首次使用或尚未配置地址时，点击发送直接打开设置页，引导用户完成配置
+                            guard canvasManager.isUploadEndpointConfigured else {
+                                endpointDraft = AppConfig.endpointPlaceholder
+                                showEndpointSheet = true
+                                // 同时给一个提示，告诉用户为什么弹窗
+                                sentConfirmationMessage = "请先设置 Mac 服务的地址"
+                                sentConfirmationIsError = true
+                                withAnimation(.spring) {
+                                    showSentConfirmation = true
+                                }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+                                    withAnimation {
+                                        showSentConfirmation = false
+                                    }
+                                }
+                                return
+                            }
+                            
                             if let image = canvasManager.exportAsImage() {
                                 canvasManager.sendImageToServer(image: image) { success, message in
                                     sentConfirmationMessage = message
@@ -491,7 +500,18 @@ struct ContentView: View {
         // 为什么延迟？因为第一次 makeUIView 时，canvasView 可能还没被加到 window 上，
         // 必须等它真正出现在屏幕上，becomeFirstResponder() 才会生效。
         .onAppear {
-            endpointDraft = canvasManager.currentUploadEndpoint()
+            let current = canvasManager.currentUploadEndpoint()
+            endpointDraft = current.isEmpty ? AppConfig.endpointPlaceholder : current
+            
+            // 首次使用（或清除数据后）自动弹出服务配置页，强制用户填写真实 Mac 地址
+            if !canvasManager.isUploadEndpointConfigured && !didAutoShowSetupSheet {
+                didAutoShowSetupSheet = true
+                // 稍微延迟一下，让画布先渲染出来，弹窗体验更自然
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    showEndpointSheet = true
+                }
+            }
+            
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                 canvasManager.configureInfiniteCanvasIfNeeded()
                 canvasManager.showToolPicker()
@@ -502,14 +522,33 @@ struct ContentView: View {
                 endpointDraft: $endpointDraft,
                 currentEndpoint: canvasManager.currentUploadEndpoint(),
                 onSave: {
+                    // 检测是否是首次配置，配置成功后给出友好欢迎提示
+                    let wasUnconfigured = !canvasManager.isUploadEndpointConfigured
                     canvasManager.updateUploadEndpoint(endpointDraft)
                     showEndpointSheet = false
+                    
+                    if wasUnconfigured {
+                        // 延迟一点等弹窗完全消失后再显示成功提示
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                            sentConfirmationMessage = "设置完成！现在可以开始手写并点击「发送」了 ✓"
+                            sentConfirmationIsError = false
+                            withAnimation(.spring) {
+                                showSentConfirmation = true
+                            }
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                                withAnimation {
+                                    showSentConfirmation = false
+                                }
+                            }
+                        }
+                    }
                 },
                 onReset: {
-                    endpointDraft = AppConfig.defaultUploadEndpoint
+                    // 不再使用硬编码的旧 IP，而是给一个清晰的示例格式，让用户自己改 IP
+                    endpointDraft = AppConfig.endpointPlaceholder
                 },
-                onTestConnection: { endpoint, completion in
-                    canvasManager.testServerConnection(endpoint: endpoint, completion: completion)
+                onTest: { endpoint, completion in
+                    canvasManager.testConnection(to: endpoint, completion: completion)
                 }
             )
             .presentationDetents([.medium])
@@ -552,81 +591,108 @@ private struct ServerEndpointSheet: View {
     let currentEndpoint: String
     let onSave: () -> Void
     let onReset: () -> Void
-    let onTestConnection: (String, @escaping (Bool, String) -> Void) -> Void
+    let onTest: (String, @escaping (Bool, String) -> Void) -> Void
     
     @State private var isTestingConnection = false
     @State private var testResultMessage: String?
-    @State private var testResultSuccess: Bool?
+    @State private var testResultIsSuccess: Bool?
     
     var body: some View {
         NavigationStack {
             Form {
                 Section("当前地址") {
-                    Text(currentEndpoint)
-                        .font(.footnote)
-                        .textSelection(.enabled)
-                }
-                
-                Section("修改服务地址") {
-                    TextField("http://192.168.x.x:8765/upload", text: $endpointDraft)
-                        .keyboardType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .onChange(of: endpointDraft) { _, _ in
-                            testResultMessage = nil
-                            testResultSuccess = nil
+                    if currentEndpoint.isEmpty {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text("尚未设置")
+                                .foregroundStyle(.secondary)
+                                .font(.footnote)
                         }
-                    
-                    Button("恢复默认地址") {
-                        onReset()
-                        testResultMessage = nil
-                        testResultSuccess = nil
+                    } else {
+                        Text(currentEndpoint)
+                            .font(.footnote)
+                            .textSelection(.enabled)
                     }
                 }
                 
-                Section("连接测试") {
-                    Button {
+                // 首次使用时给出清晰的 3 步引导，降低配置门槛
+                if currentEndpoint.isEmpty {
+                    Section {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("欢迎使用！首次配置只需 3 步：")
+                                .font(.subheadline.weight(.semibold))
+                            Text("① 在 Mac 终端运行：python3 mac_server/clipboard_server.py")
+                            Text("② 复制终端打印的「推荐 iPad 地址」（例如 http://192.168.1.181:8765/upload）")
+                            Text("③ 粘贴到下方 → 点击「测试连接」看到绿勾 → 右上角「保存」")
+                        }
+                        .font(.footnote)
+                        .padding(.vertical, 4)
+                    } header: {
+                        Text("新手快速配置")
+                    }
+                }
+                
+                Section("修改服务地址") {
+                    TextField(AppConfig.endpointPlaceholder, text: $endpointDraft)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    
+                    Button("使用示例格式") {
+                        onReset()
+                        // 重置后清掉上一次的测试结果，避免混淆
                         testResultMessage = nil
-                        testResultSuccess = nil
+                        testResultIsSuccess = nil
+                    }
+                    
+                    Button {
+                        let toTest = endpointDraft
                         isTestingConnection = true
-                        onTestConnection(endpointDraft) { success, message in
+                        testResultMessage = nil
+                        testResultIsSuccess = nil
+                        
+                        onTest(toTest) { success, message in
                             isTestingConnection = false
-                            testResultSuccess = success
+                            testResultIsSuccess = success
                             testResultMessage = message
                         }
                     } label: {
-                        HStack {
-                            Text("测试连接")
-                            Spacer()
+                        HStack(spacing: 8) {
                             if isTestingConnection {
                                 ProgressView()
+                                    .scaleEffect(0.85)
+                                Text("正在测试连接...")
+                            } else {
+                                Image(systemName: "network")
+                                Text("测试连接")
                             }
                         }
                     }
                     .disabled(endpointDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isTestingConnection)
-                    
-                    if let testResultMessage {
-                        Label {
-                            Text(testResultMessage)
-                        } icon: {
-                            Image(systemName: testResultSuccess == true ? "checkmark.circle.fill" : "xmark.circle.fill")
+                }
+                
+                if let message = testResultMessage, let isSuccess = testResultIsSuccess {
+                    Section("连接测试结果") {
+                        HStack(spacing: 8) {
+                            Image(systemName: isSuccess ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                                .foregroundStyle(isSuccess ? .green : .red)
+                            Text(message)
+                                .foregroundStyle(isSuccess ? .green : .red)
+                                .font(.callout)
                         }
-                        .foregroundStyle(testResultSuccess == true ? .green : .red)
-                        .font(.footnote)
                     }
-                    
-                    Text("会向 Mac 的 /health 接口发送请求，确认服务是否在线。")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
                 
                 Section("说明") {
+                    Text("把 Mac 端启动服务后打印的地址（http://192.168.x.x:8765/upload）填进来。")
+                    Text("改完地址后请先点「测试连接」，看到绿勾再点右上角「保存」。")
                     Text("你的 iPad 和 Mac 必须在同一个局域网。")
                     Text("通常只需要改 IP，端口保持 8765，路径保持 /upload。")
                     Text("不要用 198.18.x 地址——那是 Mac 上 VPN/代理的虚拟网卡，iPad 访问不到。")
                 }
             }
-            .navigationTitle("服务设置")
+            .navigationTitle(currentEndpoint.isEmpty ? "首次设置" : "服务设置")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("取消") {
