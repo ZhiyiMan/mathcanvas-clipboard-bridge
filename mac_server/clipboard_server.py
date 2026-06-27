@@ -3,8 +3,8 @@
 MathCanvas Mac 本地接收服务
 --------------------------------
 功能：
-1) 接收 iPad 通过 HTTP POST 发送的图片（/upload）
-2) 将图片保存到 received_images/
+1) 接收 iPad 通过 HTTP POST 发送的图片(/upload)
+2) 将图片保存到系统临时目录(默认 /tmp/MathCanvas_received_images)
 3) 自动写入 Mac 系统剪贴板，便于直接 Cmd+V
 
 仅依赖 Python 标准库，不需要额外 pip 安装。
@@ -16,6 +16,7 @@ import argparse
 import json
 import socket
 import subprocess
+import tempfile
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -25,8 +26,7 @@ from typing import Tuple
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8765
 MAX_PAYLOAD_BYTES = 20 * 1024 * 1024  # 20MB
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_IMAGES_DIR = PROJECT_ROOT / "received_images"
+DEFAULT_IMAGES_DIR = Path(tempfile.gettempdir()) / "MathCanvas_received_images"
 
 
 def _timestamp_filename(ext: str) -> str:
@@ -60,7 +60,7 @@ def _copy_image_to_clipboard(image_path: Path) -> Tuple[bool, str]:
 
 
 def _list_interface_ips() -> list[str]:
-    """列出本机所有非回环 IPv4 地址（macOS ifconfig）。"""
+    """列出本机所有非回环 IPv4 地址(macOS ifconfig)。"""
     try:
         result = subprocess.run(["ifconfig"], capture_output=True, text=True, check=False)
     except OSError:
@@ -116,7 +116,7 @@ def _guess_local_ip() -> str:
 
 
 def _list_recommended_ips() -> list[str]:
-    """返回所有可供 iPad 尝试的局域网 IP（按优先级排序）。"""
+    """返回所有可供 iPad 尝试的局域网 IP(按优先级排序)。"""
     candidates = [ip for ip in _list_interface_ips() if _is_reachable_lan_ip(ip)]
 
     def sort_key(ip: str) -> tuple[int, str]:
@@ -269,7 +269,7 @@ def main() -> None:
     print(f"监听地址: {args.host}:{args.port}")
     print(f"推荐 iPad 地址: http://{local_ip}:{args.port}/upload")
     if len(all_ips) > 1:
-        print("其他可用地址（iPad 与 Mac 须在同一网段时选对应 IP）：")
+        print("其他可用地址(iPad 与 Mac 须在同一网段时选对应 IP)：")
         for ip in all_ips:
             if ip != local_ip:
                 print(f"  http://{ip}:{args.port}/upload")

@@ -14,9 +14,10 @@ import SwiftUI
 import PencilKit
 import UIKit
 import Combine
+import PhotosUI
 
 // MARK: - CanvasManager
-/// 这个 ObservableObject 负责持有并管理 PKCanvasView（PencilKit 画布）。
+/// 这个 ObservableObject 负责持有并管理 PKCanvasView(PencilKit 画布)。
 /// 为什么需要它？
 /// - SwiftUI 的 Button 需要调用「清空」「导出图片」等操作。
 /// - 而 PKCanvasView 是 UIKit 组件，我们通过这个「桥梁」来间接操作它。
@@ -26,24 +27,24 @@ final class CanvasManager: ObservableObject {
     /// 显式提供 objectWillChange 可以避免“未遵循协议”的编译误报。
     let objectWillChange = ObservableObjectPublisher()
     
-    /// 核心画布视图（引用类型），我们只创建一次，终身持有。
+    /// 核心画布视图(引用类型)，我们只创建一次，终身持有。
     let canvasView: PKCanvasView = {
         let canvas = PKCanvasView()
         
-        // 改成 .pencilOnly：Apple Pencil 负责书写，手指负责平移/缩放导航。
+        // 改成 .pencilOnly: Apple Pencil 负责书写，手指负责平移/缩放导航。
         // 这是无边记类应用最常见的交互方式。
         canvas.drawingPolicy = .pencilOnly
         
-        // 背景设为纯白，导出图片时更干净（适合发给 Gemini 识别数学公式）。
+        // 背景设为纯白，导出图片时更干净(适合发给 Gemini 识别数学公式)。
         canvas.backgroundColor = .white
         
         // 设置默认绘图工具：
-        // - .pen：钢笔，线条清晰，适合写公式和步骤
-        // - color: .black：默认黑色墨迹
-        // - width: 2.5：比较舒服的默认粗细（可通过工具选择器实时调节）
+        // - .pen: 钢笔，线条清晰，适合写公式和步骤
+        // - color: .black, 默认黑色墨迹
+        // - width: 2.5, 比较舒服的默认粗细(可通过工具选择器实时调节)
         canvas.tool = PKInkingTool(.pen, color: .black, width: 2.5)
         
-        // 让画布不裁剪内容（写很长的解题过程也能保留）
+        // 让画布不裁剪内容(写很长的解题过程也能保留)
         canvas.contentInset = .zero
         
         return canvas
@@ -54,7 +55,7 @@ final class CanvasManager: ObservableObject {
     private let toolPicker = PKToolPicker()
     
     /// 无边记式大小。
-    /// 这个值越大，越像无限画布（不是诈骗！！！！！！同时不会真的产生巨量内存占用）。
+    /// 这个值越大，越像无限画布(不是诈骗！！！！！！同时不会真的产生巨量内存占用)。
     private let workspaceSize = CGSize(width: 20_000, height: 20_000)
     
     /// 只在首次布局时做一次无限画布初始化，避免每次刷新都重置缩放和位置。
@@ -69,11 +70,11 @@ final class CanvasManager: ObservableObject {
     }
     
     // MARK: 导出为 UIImage
-    /// 把当前画布内容渲染成一张图片（带白色不透明背景）。
+    /// 把当前画布内容渲染成一张图片(带白色不透明背景)。
     /// 为什么要做这一步？
     /// - PencilKit 的 drawing 本身只是矢量数据。
     /// - 我们需要把它「拍成照片」一样的 UIImage，才能通过网络发送。
-    /// - 这里固定使用画布的完整 bounds，保证每次导出的图片尺寸一致（便于后续服务端处理）。
+    /// - 这里固定使用画布的完整 bounds，保证每次导出的图片尺寸一致(便于后续服务端处理)。
     func exportAsImage() -> UIImage? {
         let bounds = canvasView.bounds
         guard bounds.width > 0, bounds.height > 0 else {
@@ -99,7 +100,7 @@ final class CanvasManager: ObservableObject {
             UIColor.white.setFill()
             UIRectFill(localRect)
             
-            // 2. 把 PencilKit 里所有的笔迹（drawing）画到这个白色背景上
+            // 2. 把 PencilKit 里所有的笔迹(drawing)画到这个白色背景上
             //    drawing.image(from:scale:) 能高效渲染矢量笔迹为位图
             let scale = UIScreen.main.scale
             let drawingImage = canvasView.drawing.image(from: visibleRectInCanvas, scale: scale)
@@ -109,13 +110,13 @@ final class CanvasManager: ObservableObject {
         return finalImage
     }
     
-    // MARK: 发送图片到服务端（HTTP POST）
+    // MARK: 发送图片到服务端(HTTP POST)
     /// 把导出的 UIImage 通过局域网发送给 Mac。
     /// 当前协议非常简单：
     /// - Method: POST
     /// - Content-Type: image/jpeg
     /// - Body: JPEG 二进制数据
-    /// - URL: uploadEndpoint（例如 http://192.168.31.101:8765/upload）
+    /// - URL: uploadEndpoint(例如 http://192.168.31.101:8765/upload)
     ///
     /// - Parameter image: 已经渲染好的完整截图
     /// - Parameter completion: 主线程回调，success 表示 HTTP 2xx
@@ -124,7 +125,7 @@ final class CanvasManager: ObservableObject {
         
         guard let url = URL(string: uploadEndpoint) else {
             let message = "服务地址不是合法 URL"
-            print("【MathCanvas】发送失败：uploadEndpoint 不是合法 URL -> \(uploadEndpoint)")
+            print("[MathCanvas] 发送失败: uploadEndpoint 不是合法 URL -> \(uploadEndpoint)")
             DispatchQueue.main.async { completion?(false, message) }
             return
         }
@@ -133,7 +134,7 @@ final class CanvasManager: ObservableObject {
         // 数学手写场景通常黑白为主，压缩质量 0.9所以已经非常清晰。
         guard let jpegData = image.jpegData(compressionQuality: 0.9) else {
             let message = "图片转换失败"
-            print("【MathCanvas】发送失败：UIImage 转 JPEG 失败")
+            print("[MathCanvas] 发送失败: UIImage 转 JPEG 失败")
             DispatchQueue.main.async { completion?(false, message) }
             return
         }
@@ -144,38 +145,38 @@ final class CanvasManager: ObservableObject {
         request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
         request.setValue("MathCanvas-iPad", forHTTPHeaderField: "X-Client-Name")
         
-        print("【MathCanvas】开始发送：\(jpegData.count) bytes -> \(uploadEndpoint)")
+        print("[MathCanvas] 开始发送: \(jpegData.count) bytes -> \(uploadEndpoint)")
         
         URLSession.shared.uploadTask(with: request, from: jpegData) { data, response, error in
             if let error {
                 let message = error.localizedDescription
-                print("【MathCanvas】发送失败：\(message)")
+                print("[MathCanvas] 发送失败: \(message)")
                 DispatchQueue.main.async { completion?(false, message) }
                 return
             }
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 let message = "未收到 HTTP 响应"
-                print("【MathCanvas】发送失败：没有收到 HTTP 响应")
+                print("[MathCanvas] 发送失败: 没有收到 HTTP 响应")
                 DispatchQueue.main.async { completion?(false, message) }
                 return
             }
             
             let responseText = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
             if (200...299).contains(httpResponse.statusCode) {
-                print("【MathCanvas】发送成功：status=\(httpResponse.statusCode) \(responseText)")
+                print("[MathCanvas] 发送成功: status=\(httpResponse.statusCode) \(responseText)")
                 DispatchQueue.main.async { completion?(true, "已发送到 Mac ✓") }
             } else {
                 let message = "HTTP \(httpResponse.statusCode)"
-                print("【MathCanvas】发送失败：status=\(httpResponse.statusCode) \(responseText)")
+                print("[MathCanvas] 发送失败: status=\(httpResponse.statusCode) \(responseText)")
                 DispatchQueue.main.async { completion?(false, message) }
             }
         }.resume()
     }
     
-    // MARK: 服务地址设置（给分享版本用）
+    // MARK: 服务地址设置(给分享版本用)
     /// 当前生效的服务地址。
-    /// - 如果用户从未保存过（或保存的是空字符串），返回空字符串，表示「尚未配置」。
+    /// - 如果用户从未保存过(或保存的是空字符串)，返回空字符串，表示「尚未配置」。
     /// - 首次使用时会据此自动弹出设置页，强制用户填写 Mac 端的真实地址。
     func currentUploadEndpoint() -> String {
         let saved = UserDefaults.standard.string(forKey: AppConfig.uploadEndpointKey)
@@ -183,21 +184,21 @@ final class CanvasManager: ObservableObject {
         return trimmed
     }
     
-    /// 更新服务地址（会去掉前后空格，避免输入错误）。
+    /// 更新服务地址(会去掉前后空格，避免输入错误)。
     func updateUploadEndpoint(_ endpoint: String) {
         let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         UserDefaults.standard.set(trimmed, forKey: AppConfig.uploadEndpointKey)
     }
     
-    /// 是否已经配置过有效的服务地址（用于首次使用引导和发送前校验）。
+    /// 是否已经配置过有效的服务地址(用于首次使用引导和发送前校验)。
     var isUploadEndpointConfigured: Bool {
         let saved = UserDefaults.standard.string(forKey: AppConfig.uploadEndpointKey)
         return (saved ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
     
-    // MARK: 连接测试（服务设置页专用）
+    // MARK: 连接测试(服务设置页专用)
     /// 从用户填写的上传地址推导出健康检查 URL 并发起 GET /health。
-    /// 支持用户只填到端口（如 http://192.168.1.181:8765），也会自动补 /health。
+    /// 支持用户只填到端口(如 http://192.168.1.181:8765)，也会自动补 /health。
     func testConnection(to endpoint: String, completion: @escaping (Bool, String) -> Void) {
         guard let healthURL = Self.derivedHealthURL(from: endpoint) else {
             completion(false, "地址格式不正确，请检查是否为 http://IP:端口 格式")
@@ -208,35 +209,35 @@ final class CanvasManager: ObservableObject {
         request.httpMethod = "GET"
         request.timeoutInterval = 6
         
-        print("【MathCanvas】开始连接测试：\(healthURL.absoluteString)")
+        print("[MathCanvas] 开始连接测试: \(healthURL.absoluteString)")
         
         URLSession.shared.dataTask(with: request) { data, response, error in
             if let error {
                 let message = Self.friendlyNetworkErrorMessage(for: error)
-                print("【MathCanvas】连接测试失败：\(message)")
+                print("[MathCanvas] 连接测试失败: \(message)")
                 DispatchQueue.main.async { completion(false, message) }
                 return
             }
             
             guard let httpResponse = response as? HTTPURLResponse else {
                 let message = "未收到 HTTP 响应"
-                print("【MathCanvas】连接测试失败：\(message)")
+                print("[MathCanvas] 连接测试失败: \(message)")
                 DispatchQueue.main.async { completion(false, message) }
                 return
             }
             
             if (200...299).contains(httpResponse.statusCode) {
-                print("【MathCanvas】连接测试成功：status=\(httpResponse.statusCode)")
+                print("[MathCanvas] 连接测试成功: status=\(httpResponse.statusCode)")
                 DispatchQueue.main.async { completion(true, "连接成功 ✓ Mac 服务可访问") }
             } else {
-                let message = "服务返回错误（HTTP \(httpResponse.statusCode)）"
-                print("【MathCanvas】连接测试失败：\(message)")
+                let message = "服务返回错误(HTTP \(httpResponse.statusCode))"
+                print("[MathCanvas] 连接测试失败: \(message)")
                 DispatchQueue.main.async { completion(false, message) }
             }
         }.resume()
     }
     
-    /// 把任意上传地址转成健康检查地址（/health）。
+    /// 把任意上传地址转成健康检查地址(/health)。
     private static func derivedHealthURL(from endpoint: String) -> URL? {
         let trimmed = endpoint.trimmingCharacters(in: .whitespacesAndNewlines)
         guard var comps = URLComponents(string: trimmed) else { return nil }
@@ -246,7 +247,7 @@ final class CanvasManager: ObservableObject {
         return comps.url
     }
     
-    /// 把底层网络错误翻译成对普通用户友好的提示（覆盖我们踩过的坑）。
+    /// 把底层网络错误翻译成对普通用户友好的提示(覆盖我们踩过的坑)。
     private static func friendlyNetworkErrorMessage(for error: Error) -> String {
         let ns = error as NSError
         guard ns.domain == NSURLErrorDomain else {
@@ -267,8 +268,8 @@ final class CanvasManager: ObservableObject {
     }
     
     // MARK: 显示 PencilKit 工具选择器
-    /// 调出官方的工具面板（笔、橡皮擦、尺子、颜色选择器等）。
-    /// 必须在 canvasView 已经被加入窗口（有 window）之后调用，否则不会显示。
+    /// 调出官方的工具面板(笔、橡皮擦、尺子、颜色选择器等)。
+    /// 必须在 canvasView 已经被加入窗口(有 window)之后调用，否则不会显示。
     func showToolPicker() {
         // iOS 17+ 用实例属性 toolPicker，不再有 PKToolPicker.shared
         // 关键：让 canvasView 观察 toolPicker 的工具变化。
@@ -279,7 +280,7 @@ final class CanvasManager: ObservableObject {
         }
         toolPicker.setVisible(true, forFirstResponder: canvasView)
         
-        // 主动让画布成为第一响应者（很重要！只有成为第一响应者，工具面板才会出现）
+        // 主动让画布成为第一响应者(很重要！只有成为第一响应者，工具面板才会出现)
         canvasView.becomeFirstResponder()
         
         // 兜底：如果 updateUIView 没在合适时机触发，这里再次确保无限画布被初始化。
@@ -321,19 +322,19 @@ final class CanvasManager: ObservableObject {
 }
 
 // MARK: - PencilCanvasView
-/// 这是一个「桥接组件」（UIViewRepresentable），负责把 UIKit 的 PKCanvasView 嵌入到 SwiftUI 界面里。
+/// 这是一个「桥接组件」(UIViewRepresentable)，负责把 UIKit 的 PKCanvasView 嵌入到 SwiftUI 界面里。
 /// SwiftUI 自己没有 PencilKit 组件，所以我们必须用这种方式包装。
 struct PencilCanvasView: UIViewRepresentable {
     
     /// 通过 @ObservedObject 观察 CanvasManager，
-    /// 当 manager 里的 canvasView 发生变化时（其实我们基本不改它），界面能保持同步。
+    /// 当 manager 里的 canvasView 发生变化时(其实我们基本不改它)，界面能保持同步。
     @ObservedObject var manager: CanvasManager
     
-    /// 创建真正的 PKCanvasView（只会调用一次）
+    /// 创建真正的 PKCanvasView(只会调用一次)
     func makeUIView(context: Context) -> PKCanvasView {
         let canvas = manager.canvasView
         
-        // 可选：设置 delegate，用于监听笔迹变化（画完一笔、撤销、重做等）
+        // 可选：设置 delegate，用于监听笔迹变化(画完一笔、撤销、重做等)
         // 我们先留空，Coordinator 也先不写具体逻辑，后面有需要再加。
         canvas.delegate = context.coordinator
         
@@ -347,7 +348,7 @@ struct PencilCanvasView: UIViewRepresentable {
         manager.configureInfiniteCanvasIfNeeded()
     }
     
-    /// 创建协调器（Coordinator）。
+    /// 创建协调器(Coordinator)。
     /// Coordinator 是 UIKit 和 SwiftUI 之间的「中间人」，常用来实现各种 Delegate。
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -384,15 +385,27 @@ struct ContentView: View {
     /// 标记本启动周期内是否已经自动弹出过「首次配置」弹窗，避免重复打扰。
     @State private var didAutoShowSetupSheet = false
     
+    /// 拍照弹窗
+    @State private var showCameraCaptureSheet = false
+    
+    /// 相册选择弹窗
+    @State private var showPhotoLibrarySheet = false
+    
+    /// 外部图片(拍照/相册)预览确认弹窗
+    @State private var showImagePreviewSheet = false
+    @State private var previewImages: [UIImage] = []
+    @State private var previewSelectedIndex = 0
+    @State private var previewSource: ExternalImageSource = .camera
+    
     var body: some View {
         ZStack {
             // 1. 全屏 PencilKit 画布
-            //    .ignoresSafeArea() 让它真正铺满整个屏幕（包括刘海、home indicator 区域），
+            //    .ignoresSafeArea() 让它真正铺满整个屏幕(包括刘海、home indicator 区域)，
             //    手写时不会有白边或被安全区域裁掉的问题。
             PencilCanvasView(manager: canvasManager)
                 .ignoresSafeArea()
             
-            // 2. 右下角悬浮圆按钮（更接近无边记风格）
+            // 2. 右下角悬浮圆按钮(更接近无边记风格)
             //    视觉目标：
             //    - 操作层更轻，不抢手写内容
             //    - 毛玻璃圆按钮 + 柔和阴影，保持现代感
@@ -404,7 +417,7 @@ struct ContentView: View {
                     Spacer()
                     
                     VStack(spacing: 14) {
-                        // —— 设置按钮（给分享版本非常重要）——
+                        // —— 设置按钮(给分享版本非常重要)——
                         Button {
                             let current = canvasManager.currentUploadEndpoint()
                             // 如果尚未配置过，预填一个示例格式，方便用户直接改 IP
@@ -418,40 +431,11 @@ struct ContentView: View {
                             )
                         }
                         
-                        // —— 发送按钮（主按钮）——
+                        // —— 发送按钮(主按钮)——
                         Button {
-                            // 首次使用或尚未配置地址时，点击发送直接打开设置页，引导用户完成配置
-                            guard canvasManager.isUploadEndpointConfigured else {
-                                endpointDraft = AppConfig.endpointPlaceholder
-                                showEndpointSheet = true
-                                // 同时给一个提示，告诉用户为什么弹窗
-                                sentConfirmationMessage = "请先设置 Mac 服务的地址"
-                                sentConfirmationIsError = true
-                                withAnimation(.spring) {
-                                    showSentConfirmation = true
-                                }
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
-                                    withAnimation {
-                                        showSentConfirmation = false
-                                    }
-                                }
-                                return
-                            }
-                            
+                            guard ensureEndpointConfiguredOrPrompt() else { return }
                             if let image = canvasManager.exportAsImage() {
-                                canvasManager.sendImageToServer(image: image) { success, message in
-                                    sentConfirmationMessage = message
-                                    sentConfirmationIsError = !success
-                                    withAnimation(.spring) {
-                                        showSentConfirmation = true
-                                    }
-                                    
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-                                        withAnimation {
-                                            showSentConfirmation = false
-                                        }
-                                    }
-                                }
+                                sendImageWithFeedback(image)
                             }
                         } label: {
                             FreeformFloatingButton(
@@ -461,7 +445,30 @@ struct ContentView: View {
                             )
                         }
                         
-                        // —— 清空按钮（次按钮）——
+                        // —— 拍照发送(新增)——
+                        Button {
+                            startCameraFlow()
+                        } label: {
+                            FreeformFloatingButton(
+                                title: "拍照",
+                                systemImage: "camera.fill",
+                                tint: .green
+                            )
+                        }
+                        
+                        // —— 相册发送(新增)——
+                        Button {
+                            guard ensureEndpointConfiguredOrPrompt() else { return }
+                            showPhotoLibrarySheet = true
+                        } label: {
+                            FreeformFloatingButton(
+                                title: "相册",
+                                systemImage: "photo.on.rectangle.angled",
+                                tint: .teal
+                            )
+                        }
+                        
+                        // —— 清空按钮(次按钮)——
                         Button {
                             canvasManager.clearCanvas()
                         } label: {
@@ -477,7 +484,7 @@ struct ContentView: View {
                 }
             }
             
-            // 3. 发送成功后的顶部提示条（半透明）
+            // 3. 发送成功后的顶部提示条(半透明)
             //    顶部居中轻提示，避免遮挡右下角按钮。
             if showSentConfirmation {
                 VStack {
@@ -503,7 +510,7 @@ struct ContentView: View {
             let current = canvasManager.currentUploadEndpoint()
             endpointDraft = current.isEmpty ? AppConfig.endpointPlaceholder : current
             
-            // 首次使用（或清除数据后）自动弹出服务配置页，强制用户填写真实 Mac 地址
+            // 首次使用(或清除数据后)自动弹出服务配置页，强制用户填写真实 Mac 地址
             if !canvasManager.isUploadEndpointConfigured && !didAutoShowSetupSheet {
                 didAutoShowSetupSheet = true
                 // 稍微延迟一下，让画布先渲染出来，弹窗体验更自然
@@ -554,11 +561,302 @@ struct ContentView: View {
             .presentationDetents([.medium])
             .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showCameraCaptureSheet) {
+            CameraCaptureSheet { capturedImage in
+                guard let capturedImage else { return }
+                // 支持连拍：每次拍到都加入候选，进入预览页选择要发送的一张
+                previewSource = .camera
+                previewImages.append(capturedImage)
+                previewSelectedIndex = max(previewImages.count - 1, 0)
+                showImagePreviewSheet = true
+            }
+        }
+        .sheet(isPresented: $showPhotoLibrarySheet) {
+            PhotoLibraryPickerSheet { selectedImages in
+                guard selectedImages.isEmpty == false else { return }
+                previewSource = .photoLibrary
+                previewImages = selectedImages
+                previewSelectedIndex = 0
+                showImagePreviewSheet = true
+            }
+        }
+        .sheet(isPresented: $showImagePreviewSheet) {
+            ImagePreviewConfirmSheet(
+                images: previewImages,
+                selectedIndex: $previewSelectedIndex,
+                source: previewSource,
+                onSend: {
+                    guard previewImages.indices.contains(previewSelectedIndex) else { return }
+                    let selected = previewImages[previewSelectedIndex]
+                    showImagePreviewSheet = false
+                    sendImageWithFeedback(selected)
+                    previewImages = []
+                    previewSelectedIndex = 0
+                },
+                onRetake: {
+                    // 连拍：关闭预览后再次打开相机，保留已拍候选
+                    showImagePreviewSheet = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        startCameraFlow(skipEndpointCheck: true)
+                    }
+                },
+                onReselect: {
+                    showImagePreviewSheet = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                        showPhotoLibrarySheet = true
+                    }
+                },
+                onCancel: {
+                    showImagePreviewSheet = false
+                    previewImages = []
+                    previewSelectedIndex = 0
+                }
+            )
+        }
+    }
+    
+    private func startCameraFlow(skipEndpointCheck: Bool = false) {
+        if skipEndpointCheck == false {
+            guard ensureEndpointConfiguredOrPrompt() else { return }
+            // 新开一轮拍照时清空旧候选；连拍续拍(skip=true)则保留
+            previewImages = []
+            previewSelectedIndex = 0
+        }
+        guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+            showStatusBanner("当前设备不可用相机", isError: true, autoHideAfter: 2.2)
+            return
+        }
+        showCameraCaptureSheet = true
+    }
+
+    enum ExternalImageSource {
+        case camera
+        case photoLibrary
+        
+        var supportsRetake: Bool { self == .camera }
+        var supportsReselect: Bool { self == .photoLibrary }
+        var title: String {
+            switch self {
+            case .camera: return "拍照预览"
+            case .photoLibrary: return "相册预览"
+            }
+        }
+    }
+    
+    /// 统一处理「还没配置地址」时的引导逻辑，避免多处重复代码。
+    private func ensureEndpointConfiguredOrPrompt() -> Bool {
+        guard canvasManager.isUploadEndpointConfigured else {
+            endpointDraft = AppConfig.endpointPlaceholder
+            showEndpointSheet = true
+            showStatusBanner("请先设置 Mac 服务的地址", isError: true, autoHideAfter: 2.2)
+            return false
+        }
+        return true
+    }
+    
+    /// 统一发送并显示结果提示(手写发送 / 拍照发送共用)。
+    private func sendImageWithFeedback(_ image: UIImage) {
+        canvasManager.sendImageToServer(image: image) { success, message in
+            showStatusBanner(message, isError: !success, autoHideAfter: 2.5)
+        }
+    }
+    
+    /// 统一显示顶部状态条。
+    private func showStatusBanner(_ message: String, isError: Bool, autoHideAfter seconds: Double) {
+        sentConfirmationMessage = message
+        sentConfirmationIsError = isError
+        withAnimation(.spring) {
+            showSentConfirmation = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
+            withAnimation {
+                showSentConfirmation = false
+            }
+        }
+    }
+}
+
+// MARK: - 拍照组件
+/// 使用系统相机拍照，返回 UIImage 给上层发送逻辑。
+private struct CameraCaptureSheet: UIViewControllerRepresentable {
+    let onImagePicked: (UIImage?) -> Void
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onImagePicked: onImagePicked)
+    }
+    
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.delegate = context.coordinator
+        picker.allowsEditing = false
+        return picker
+    }
+    
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        private let onImagePicked: (UIImage?) -> Void
+        
+        init(onImagePicked: @escaping (UIImage?) -> Void) {
+            self.onImagePicked = onImagePicked
+        }
+        
+        func imagePickerController(
+            _ picker: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            let image = info[.originalImage] as? UIImage
+            picker.dismiss(animated: true) {
+                self.onImagePicked(image)
+            }
+        }
+        
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            picker.dismiss(animated: true) {
+                self.onImagePicked(nil)
+            }
+        }
+    }
+}
+
+// MARK: - 相册选择组件
+/// 使用系统相册挑选一张或多张图，返回给上层做预览确认。
+private struct PhotoLibraryPickerSheet: UIViewControllerRepresentable {
+    let onImagesPicked: ([UIImage]) -> Void
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onImagesPicked: onImagesPicked)
+    }
+    
+    func makeUIViewController(context: Context) -> PHPickerViewController {
+        var config = PHPickerConfiguration(photoLibrary: .shared())
+        config.filter = .images
+        config.selectionLimit = 0 // 允许多选，便于“多图中选一张发送”
+        
+        let picker = PHPickerViewController(configuration: config)
+        picker.delegate = context.coordinator
+        return picker
+    }
+    
+    func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {}
+    
+    final class Coordinator: NSObject, PHPickerViewControllerDelegate {
+        private let onImagesPicked: ([UIImage]) -> Void
+        
+        init(onImagesPicked: @escaping ([UIImage]) -> Void) {
+            self.onImagesPicked = onImagesPicked
+        }
+        
+        func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+            picker.dismiss(animated: true)
+            guard results.isEmpty == false else {
+                onImagesPicked([])
+                return
+            }
+            
+            var images: [UIImage] = []
+            let group = DispatchGroup()
+            
+            for result in results {
+                guard result.itemProvider.canLoadObject(ofClass: UIImage.self) else { continue }
+                group.enter()
+                result.itemProvider.loadObject(ofClass: UIImage.self) { object, _ in
+                    DispatchQueue.main.async {
+                        if let image = object as? UIImage {
+                            images.append(image)
+                        }
+                        group.leave()
+                    }
+                }
+            }
+            
+            group.notify(queue: .main) {
+                self.onImagesPicked(images)
+            }
+        }
+    }
+}
+
+// MARK: - 图片预览确认
+private struct ImagePreviewConfirmSheet: View {
+    let images: [UIImage]
+    @Binding var selectedIndex: Int
+    let source: ContentView.ExternalImageSource
+    let onSend: () -> Void
+    let onRetake: () -> Void
+    let onReselect: () -> Void
+    let onCancel: () -> Void
+    
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 12) {
+                if images.indices.contains(selectedIndex) {
+                    Image(uiImage: images[selectedIndex])
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxHeight: 380)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14)
+                                .stroke(.white.opacity(0.5), lineWidth: 1)
+                        )
+                        .padding(.horizontal, 16)
+                }
+                
+                if images.count > 1 {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(Array(images.enumerated()), id: \.offset) { index, image in
+                                Image(uiImage: image)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 74, height: 74)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(index == selectedIndex ? Color.accentColor : Color.clear, lineWidth: 3)
+                                    )
+                                    .onTapGesture {
+                                        selectedIndex = index
+                                    }
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                    }
+                }
+                
+                Text(images.count > 1 ? "已选 \(images.count) 张，当前发送第 \(selectedIndex + 1) 张" : "确认后将发送这张图片到 Mac 剪贴板")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                
+                HStack(spacing: 10) {
+                    if source.supportsRetake {
+                        Button("继续拍") { onRetake() }
+                            .buttonStyle(.bordered)
+                    }
+                    if source.supportsReselect {
+                        Button("重选") { onReselect() }
+                            .buttonStyle(.bordered)
+                    }
+                    Button("发送这张") { onSend() }
+                        .buttonStyle(.borderedProminent)
+                }
+                .padding(.bottom, 6)
+            }
+            .navigationTitle(source.title)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("取消") { onCancel() }
+                }
+            }
+        }
     }
 }
 
 // MARK: - 无边记风格悬浮按钮
-/// 轻量级的毛玻璃圆形按钮，风格更接近 Freeform（无边记）。
+/// 轻量级的毛玻璃圆形按钮，风格更接近 Freeform(无边记)。
 private struct FreeformFloatingButton: View {
     let title: String
     let systemImage: String
@@ -623,11 +921,15 @@ private struct ServerEndpointSheet: View {
                             Text("欢迎使用！首次配置只需 3 步：")
                                 .font(.subheadline.weight(.semibold))
                             Text("① 在 Mac 终端运行：python3 mac_server/clipboard_server.py")
-                            Text("② 复制终端打印的「推荐 iPad 地址」（例如 http://192.168.1.181:8765/upload）")
+                            Text("② 复制终端打印的「推荐 iPad 地址」(例如 http://192.168.1.181:8765/upload)")
                             Text("③ 粘贴到下方 → 点击「测试连接」看到绿勾 → 右上角「保存」")
                         }
                         .font(.footnote)
                         .padding(.vertical, 4)
+
+
+
+
                     } header: {
                         Text("新手快速配置")
                     }
@@ -685,7 +987,7 @@ private struct ServerEndpointSheet: View {
                 }
                 
                 Section("说明") {
-                    Text("把 Mac 端启动服务后打印的地址（http://192.168.x.x:8765/upload）填进来。")
+                    Text("把 Mac 端启动服务后打印的地址(http://192.168.x.x:8765/upload)填进来。")
                     Text("改完地址后请先点「测试连接」，看到绿勾再点右上角「保存」。")
                     Text("你的 iPad 和 Mac 必须在同一个局域网。")
                     Text("通常只需要改 IP，端口保持 8765，路径保持 /upload。")
